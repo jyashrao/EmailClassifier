@@ -1,0 +1,8 @@
+streamlit
+pandas
+joblib
+nltk
+scikit-learn
+google-auth-oauthlib
+google-api-python-client
+xlsxwriter

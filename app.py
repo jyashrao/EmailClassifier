@@ -32,6 +32,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 def authenticate_gmail():
     creds = None
+    # 1. Check if token already exists (for returning users)
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
         
@@ -39,26 +40,46 @@ def authenticate_gmail():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # --- THE CLEAN CHROME TRICK ---
-            # This tells Windows to use Chrome for ANY browser request in this script
-            chrome_path = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-            if not os.path.exists(chrome_path):
-                # Fallback for some systems where it's in Program Files (x86)
-                chrome_path = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+            # 2. Check if we are on Streamlit Cloud (using Secrets)
+            if "google_creds" in st.secrets:
+                import json
+                creds_dict = json.loads(st.secrets["google_creds"])
+                # For Cloud, we use from_client_config instead of a file
+                flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
+                # Ensure this matches exactly what you put in Google Cloud Console
+                flow.redirect_uri = "https://emailclassifier-jyashrao.streamlit.app"
+                
+                # On Cloud, we use the library's built-in console flow
+                # This will provide a link for you to click and a code to paste
+                auth_url, _ = flow.authorization_url(prompt='consent')
+                st.info(f"🔗 [Click here to authorize with Google]({auth_url})")
+                code = st.text_input("Enter the authorization code provided after clicking the link above:")
+                if code:
+                    flow.fetch_token(code=code)
+                    creds = flow.credentials
+                else:
+                    st.stop() # Wait for the user to enter the code
             
-            # Set the environment variable so the library finds it automatically
-            os.environ['BROWSER'] = chrome_path + ' %s'
-            
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            
-            st.info("🚀 Opening Google Login in Web Browser... Please sign in there.")
-            
-            # Now we use the standard call. Since we set the environment variable, 
-            # it will handle the redirect_uri correctly and use Chrome!
-            creds = flow.run_local_server(port=0)
+            else:
+                # 3. Running Locally on your PC
+                # --- THE CLEAN CHROME TRICK ---
+                chrome_path = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+                if not os.path.exists(chrome_path):
+                    chrome_path = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+                
+                os.environ['BROWSER'] = chrome_path + ' %s'
+                
+                if not os.path.exists('credentials.json'):
+                    st.error("Missing 'credentials.json'! Please place it in the project folder.")
+                    st.stop()
+                    
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
 
+        # Save the token so we don't have to login every time
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
+            
     return build('gmail', 'v1', credentials=creds)
 
 def get_user_email(service):
@@ -152,7 +173,7 @@ if st.button("Fetch and Classify My Live Emails"):
                 elif any(word in text_to_check for word in ['linkedin', 'social', 'follow', 'friend', 'newsletter', 'youtube', 'facebook']):
                     return "📱 SOCIAL"
                 else:
-                    return "✅ SAFE"
+                    return "✅ SAFE"    
 
             df['AI Prediction'] = df.apply(get_final_label, axis=1)
             df = df[['AI Prediction', 'Sender', 'Subject', 'Content']]
